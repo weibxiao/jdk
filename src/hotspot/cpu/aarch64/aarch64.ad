@@ -1,6 +1,7 @@
 //
 // Copyright (c) 2003, 2025, Oracle and/or its affiliates. All rights reserved.
 // Copyright (c) 2014, 2024, Red Hat, Inc. All rights reserved.
+// Copyright 2025 Arm Limited and/or its affiliates.
 // DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 //
 // This code is free software; you can redistribute it and/or modify it
@@ -1194,15 +1195,10 @@ class HandlerImpl {
 
  public:
 
-  static int emit_exception_handler(C2_MacroAssembler *masm);
   static int emit_deopt_handler(C2_MacroAssembler* masm);
 
-  static uint size_exception_handler() {
-    return MacroAssembler::far_codestub_branch_size();
-  }
-
   static uint size_deopt_handler() {
-    // count one adr and one far branch instruction
+    // count one branch instruction and one far call instruction sequence
     return NativeInstruction::instruction_size + MacroAssembler::far_codestub_branch_size();
   }
 };
@@ -1266,20 +1262,20 @@ source %{
     // adlc register classes to make AArch64 rheapbase (r27) and rfp (r29)
     // registers conditionally reserved.
 
-    _ANY_REG32_mask = _ALL_REG32_mask;
+    _ANY_REG32_mask.assignFrom(_ALL_REG32_mask);
     _ANY_REG32_mask.remove(OptoReg::as_OptoReg(r31_sp->as_VMReg()));
 
-    _ANY_REG_mask = _ALL_REG_mask;
+    _ANY_REG_mask.assignFrom(_ALL_REG_mask);
 
-    _PTR_REG_mask = _ALL_REG_mask;
+    _PTR_REG_mask.assignFrom(_ALL_REG_mask);
 
-    _NO_SPECIAL_REG32_mask = _ALL_REG32_mask;
+    _NO_SPECIAL_REG32_mask.assignFrom(_ALL_REG32_mask);
     _NO_SPECIAL_REG32_mask.subtract(_NON_ALLOCATABLE_REG32_mask);
 
-    _NO_SPECIAL_REG_mask = _ALL_REG_mask;
+    _NO_SPECIAL_REG_mask.assignFrom(_ALL_REG_mask);
     _NO_SPECIAL_REG_mask.subtract(_NON_ALLOCATABLE_REG_mask);
 
-    _NO_SPECIAL_PTR_REG_mask = _ALL_REG_mask;
+    _NO_SPECIAL_PTR_REG_mask.assignFrom(_ALL_REG_mask);
     _NO_SPECIAL_PTR_REG_mask.subtract(_NON_ALLOCATABLE_REG_mask);
 
     // r27 is not allocatable when compressed oops is on and heapbase is not
@@ -1297,7 +1293,7 @@ source %{
       _NO_SPECIAL_PTR_REG_mask.remove(OptoReg::as_OptoReg(r29->as_VMReg()));
     }
 
-    _NO_SPECIAL_NO_RFP_PTR_REG_mask = _NO_SPECIAL_PTR_REG_mask;
+    _NO_SPECIAL_NO_RFP_PTR_REG_mask.assignFrom(_NO_SPECIAL_PTR_REG_mask);
     _NO_SPECIAL_NO_RFP_PTR_REG_mask.remove(OptoReg::as_OptoReg(r29->as_VMReg()));
   }
 
@@ -2261,25 +2257,6 @@ uint MachUEPNode::size(PhaseRegAlloc* ra_) const
 
 //=============================================================================
 
-// Emit exception handler code.
-int HandlerImpl::emit_exception_handler(C2_MacroAssembler* masm)
-{
-  // mov rscratch1 #exception_blob_entry_point
-  // br rscratch1
-  // Note that the code buffer's insts_mark is always relative to insts.
-  // That's why we must use the macroassembler to generate a handler.
-  address base = __ start_a_stub(size_exception_handler());
-  if (base == nullptr) {
-    ciEnv::current()->record_failure("CodeCache is full");
-    return 0;  // CodeBuffer::expand failed
-  }
-  int offset = __ offset();
-  __ far_jump(RuntimeAddress(OptoRuntime::exception_blob()->entry_point()));
-  assert(__ offset() - offset <= (int) size_exception_handler(), "overflow");
-  __ end_a_stub();
-  return offset;
-}
-
 // Emit deopt handler code.
 int HandlerImpl::emit_deopt_handler(C2_MacroAssembler* masm)
 {
@@ -2290,14 +2267,18 @@ int HandlerImpl::emit_deopt_handler(C2_MacroAssembler* masm)
     ciEnv::current()->record_failure("CodeCache is full");
     return 0;  // CodeBuffer::expand failed
   }
-  int offset = __ offset();
 
-  __ adr(lr, __ pc());
-  __ far_jump(RuntimeAddress(SharedRuntime::deopt_blob()->unpack()));
+  int offset = __ offset();
+  Label start;
+  __ bind(start);
+  __ far_call(RuntimeAddress(SharedRuntime::deopt_blob()->unpack()));
+
+  int entry_offset = __ offset();
+  __ b(start);
 
   assert(__ offset() - offset == (int) size_deopt_handler(), "overflow");
   __ end_a_stub();
-  return offset;
+  return entry_offset;
 }
 
 // REQUIRED MATCHER CODE
@@ -2545,27 +2526,27 @@ bool Matcher::use_asm_for_ldiv_by_con(jlong divisor) {
   return false;
 }
 
-RegMask Matcher::divI_proj_mask() {
+const RegMask& Matcher::divI_proj_mask() {
   ShouldNotReachHere();
-  return RegMask();
+  return RegMask::EMPTY;
 }
 
 // Register for MODI projection of divmodI.
-RegMask Matcher::modI_proj_mask() {
+const RegMask& Matcher::modI_proj_mask() {
   ShouldNotReachHere();
-  return RegMask();
+  return RegMask::EMPTY;
 }
 
 // Register for DIVL projection of divmodL.
-RegMask Matcher::divL_proj_mask() {
+const RegMask& Matcher::divL_proj_mask() {
   ShouldNotReachHere();
-  return RegMask();
+  return RegMask::EMPTY;
 }
 
 // Register for MODL projection of divmodL.
-RegMask Matcher::modL_proj_mask() {
+const RegMask& Matcher::modL_proj_mask() {
   ShouldNotReachHere();
-  return RegMask();
+  return RegMask::EMPTY;
 }
 
 bool size_fits_all_mem_uses(AddPNode* addp, int shift) {
